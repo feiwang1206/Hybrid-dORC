@@ -1,0 +1,244 @@
+function  s = orc_segm_nuFTOperator_structure_multishot(trajectory, imageDim, sensmaps, Ns, T,kmask,lambda)
+
+%% Usage:
+%    A = orc_segm_nuFTOperator(trajectory, imageDim, sensmaps, wmap, dwelltime, Ns, DeltaT)
+%
+% trajectory =  [N_timepoints x N_dimensions]:
+%               Arbitrary trajectory in 2D or 3D k-space (obligatory)
+%
+% imageDim =    [Nx Ny (Nz)]:
+%               Dimensions of the image (Only 2 dimensional for 2D; obligatory)
+%
+% sensmaps =    [Nx Ny (Nz) Ncoils]:
+%               Coil sensitivity maps ([Nx Ny Ncoils] for 2D; optional)
+%
+% wmap =        [Nx Ny (Nz)]: Off-resonance map in rads/s (obligatory)
+%
+% dwelltime =   Scalar in seconds; wmap * dwelltimes must be in radians
+%               (obligatory)
+%
+% Ns =          Integer; Number of Segments (10 works fine for MREG
+%               trajectories)
+%
+% DeltaT =      Scalar; Time (seconds), where magnetization is in phase
+%               GE: DeltaT = t(beginning of trajectory) - t(excitation); positive
+%               SE: DeltaT = t(echo) - t(beginning of trajectory); negative
+%               (optional); if not set, the magnetization is assumed to be in 
+%               phase at beginning of the trajectory. The effect is some
+%               additional phase distribution in the image. This should not
+%               have any effect, if the absolute value of the image is of
+%               interest and a linear reconstruction is used. But e.g. the
+%               total variation penalty acts on the complex variation of
+%               the image, so phase variations can be counter productive.
+%
+% In this implementation of the off-resonance corrected nuFFT-Operator a
+% Hanning-Window interpolation is implemented. The nuFFT is hard-coded with
+% no oversampling, 5 neighbors in each direction and a Kaiser-Bessel
+% Kernel. All of this can easily be changed in the function. For a Min-Max-
+% Interploation (in the temporal domain) please use orc_minmax_nuFTOperator
+%
+%
+% 30.09.2011  Thimo Hugger
+% 2010 - 2013 Jakob Asslaender
+
+if isempty(sensmaps)
+    s.numCoils = 1;
+else
+    if size(trajectory{1},2) == 3 && length(size(sensmaps))== 4
+        s.numCoils = size(sensmaps, length(size(sensmaps)));
+    end
+    if size(trajectory{1},2) == 3 && length(size(sensmaps))== 3
+        s.numCoils = 1;
+    end
+    if size(trajectory{1},2) == 2 && length(size(sensmaps))== 3
+        s.numCoils = size(sensmaps, length(size(sensmaps)));
+    end
+    if size(trajectory{1},2) == 2 && length(size(sensmaps))== 2
+        s.numCoils = 1;
+    end
+end
+
+% ss=size(sensmaps);
+% if ss(1:3) ==imageDim
+% else
+%     sensmaps=imresize3D(sensmaps,imageDim);
+% end
+% if size(wmap)==imageDim
+% else
+%     wmap=imresize3D(wmap,imageDim);
+% end
+
+s.imageDim = imageDim;
+s.adjoint = 0;
+if isempty(sensmaps)
+    s.sensmaps{1} = 1;
+else
+    for k=1:s.numCoils
+        if size(trajectory{1},2) == 3
+            if s.numCoils > 1
+                s.sensmaps{k} = sensmaps(:,:,:,k);
+            else
+                s.sensmaps{1}=sensmaps;
+            end
+        else
+             s.sensmaps{k} = sensmaps(:,:,k);
+        end
+    end
+end
+    
+
+if size(trajectory{1},2) == 3
+    s.nufftNeighbors = [5 5 5];
+else
+    s.nufftNeighbors = [5 5];
+end
+s.oversampling = s.imageDim*2;
+s.nSegments = Ns;
+
+trajectory0=trajectory;
+for n=1:length(trajectory0)
+    tl(n)=size(trajectory0{n},1);
+    if size(trajectory{1},2) == 3
+        trajectory0{n} = [trajectory0{n}(:,2), -trajectory0{n}(:,1) , trajectory0{n}(:,3)];
+    else
+        trajectory0{n} = [trajectory0{n}(:,2), -trajectory0{n}(:,1)];
+    end
+end
+s.trajectory_length = sum(tl);
+    tl = size(trajectory0{1},1);
+
+    sr = floor((tl-Ns-1)/Ns);
+    sl = 2*sr + 1;
+
+    si = cell(Ns+1,1);
+    si{1} = 1:sr+1;
+    for kk=1:Ns-1
+        si{kk+1} = kk*(sr+1)+1-sr:kk*(sr+1)+1+sr;
+    end
+    si{end} = Ns*(sr+1)+1-sr:tl;
+    for q=1:Ns+1
+        s.segment_index{q} = si{q};
+    end
+    h = hann(sl+2);
+    h = h(2:end-1);
+    ipf = cell(Ns+1,1);
+    ipf{1} = h(sr+1:end);
+    for kk=1:Ns-1
+        ipf{kk+1} = h;
+    end
+    ipf{end} = [h(1:sr);ones(length(si{end})-sr,1)];  %the remaining datapoints are not included in the interpolation and are therefore set to the last segment only. This is an approximation.
+    for k=1:Ns+1
+        s.segment_filter{k} = zeros(tl,1);
+        s.segment_filter{k}(si{k})=ipf{k};
+    end
+%    
+    t = zeros(1,Ns+1);
+    t(1) = T(1);
+    for k=1:Ns
+        t(k+1) = T(k*(sr+1)+1);
+    end
+    s.t=t;
+    trajectory=[];
+    for n=1:length(trajectory0)
+        trajectory=[trajectory;trajectory0{n}];
+    end
+    nstr = nufft_init(trajectory, s.imageDim, s.nufftNeighbors, s.oversampling, ...
+        s.imageDim/2, 'kaiser');
+    s.interpolation_matrix = nstr.p.arg.G;
+    
+for k=1:Ns+1
+    segment_filter=[];
+    for n=1:length(trajectory0)
+        segment_filter=[segment_filter;s.segment_filter{k}.*kmask{n}];
+    end
+    s.interp_filter{k} = spdiags(segment_filter,0,...
+        s.trajectory_length,length(segment_filter))*nstr.p.arg.G;
+end
+trajectory=[];
+for n=1:length(trajectory0)
+    trajectory=[trajectory;trajectory0{n};];
+end
+nstr = nufft_init(trajectory, s.imageDim, s.nufftNeighbors, s.oversampling, s.imageDim/2, 'minmax:kb');
+
+s.scaling_factor = nstr.sn; % is the same each time
+s.sensmaps_scale = bsxfun(@times,s.scaling_factor,sensmaps);
+
+smaps=s.sensmaps;
+s1=s;
+s1.nufftStruct= nufft_init(trajectory, imageDim*2, s.nufftNeighbors, round(4*imageDim), ceil(imageDim), 'minmax:kb');
+% s.wi=mri_dcf_pipe(trajectory, nstr);
+s.wi=kspace_precond(s1,smaps,lambda);
+
+% s.sensmaps=[];
+% s.sensmaps_scale=[];
+
+function wi = mri_dcf_pipe(kspace, G)
+wi = ones(length(kspace), 1);
+P = G.p;
+goal = inf;
+iter = 0;
+saver = zeros(200,1);
+while max(abs(goal-1)) > 0.02
+	iter = iter + 1;
+	goal = P * (P' * wi);
+	wi = wi ./ real(goal);
+	if iter > 20
+		warning 'iteration stuck?'
+% 		keyboard
+        break
+	end
+	saver(iter) = max(abs(goal-1));
+end
+% printm('pipe ended at iteration %d with %g', iter, max(abs(goal-1)))
+% plot(saver(2:end))
+% keyboard
+
+% fov = 256;
+% scale = G.sn(end/2,end/2)^(-2) / fov^2 ...
+% 	/ prod(G.Kd) * prod(G.Nd);
+% wi = wi * scale;
+
+function wi=circu_precond(s,lambda)
+gap=s.oversampling./s.imageDim;
+% scale=prod(s.oversampling).^1.5/prod(s.imageDim).^2;
+scale=1/prod(s.imageDim).^2;
+psf=nufft_adj(ones(s.trajectory_length,1),s.nufftStruct);%/prod(s.oversampling)^1.5;
+wi=0;
+for i=1:length(s.sensmaps)
+    xf=abs(fftshift(fftn(conj(s.sensmaps{i}),s.oversampling))).^2;%/prod(s.oversampling);
+    x=fftshift(ifftn(xf));%*sqrt(prod(s.oversampling));
+    x=x.*psf;
+    wi_i=fftn(fftshift(x));%/sqrt(prod(s.oversampling));
+    if length(size(x))==3
+        wi_i=wi_i(1:gap(1):end,1:gap(2):end,1:gap(3):end);
+    else
+        wi_i=wi_i(1:gap(1):end,1:gap(2):end);
+    end
+    wi_i=wi_i*scale;
+    wi=wi+wi_i;
+end
+wi=wi+lambda;
+wi(wi==0)=1;
+wi=1./wi;    
+
+function wi=kspace_precond(s,sensmaps,lambda)
+scale=prod(s.oversampling).^1.5/prod(s.imageDim);
+psf=nufft_adj(ones(s.trajectory_length,1),s.nufftStruct);
+wi=[];
+for i=1:length(sensmaps)
+    snorm=l2norm(gather(col(sensmaps{i})))^2;
+    xf=0;
+    for j=1:length(sensmaps)
+        xf=xf+abs((fftn((sensmaps{i}.*conj(sensmaps{j})),s.oversampling))).^2;
+    end
+    x=fftshift(ifftn((xf)))/sqrt(prod(s.oversampling));
+    x=x.*psf;
+    wi_i=nufft(x,s.nufftStruct)/prod(s.oversampling);
+    wi_i=wi_i*scale/snorm;
+    wi(:,i)=gather(col(wi_i));
+end
+wi=(abs(wi)+lambda)/(1+lambda);
+wi(wi==0)=1;
+wi=1./wi;        
+    
+
