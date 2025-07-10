@@ -409,7 +409,7 @@ for n=rang
             image(:,:,:,3)=real(gather(input{2}))/norm;
             image(:,:,:,4)=imag(gather(input{2}))/norm;
             image(:,:,:,5)=gather(input_field)/1000;
-            load(['net/diff_image_field/net_final' num2str(nn) '.mat'],'net');
+            load(['net/net_final' num2str(nn) '.mat'],'net');
             tmp=double(predict(net,image)); 
             recon{3} = tmp(:,:,:,1)*100+image(:,:,:,5)*1000;
             recon0=imresize3D((tmp(:,:,:,2)+1i*tmp(:,:,:,3))*norm+(input{1}+input{2})/2,dim1);
