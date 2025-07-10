@@ -409,8 +409,7 @@ for n=rang
             image(:,:,:,3)=real(gather(input{2}))/norm;
             image(:,:,:,4)=imag(gather(input{2}))/norm;
             image(:,:,:,5)=gather(input_field)/1000;
-            load(['/home/ubuntu/Documents/work/train/dataset/simu_fbu_modl_fista17_image_field_scale2/net/diff_image_field/net_final' ...
-                num2str(nn) '.mat'],'net');
+            load(['net/diff_image_field/net_final' num2str(nn) '.mat'],'net');
             tmp=double(predict(net,image)); 
             recon{3} = tmp(:,:,:,1)*100+image(:,:,:,5)*1000;
             recon0=imresize3D((tmp(:,:,:,2)+1i*tmp(:,:,:,3))*norm+(input{1}+input{2})/2,dim1);
