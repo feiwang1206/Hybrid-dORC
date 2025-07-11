@@ -10,10 +10,10 @@ setup
 lambda=0.01;
 
 scale=[1 1 1];
-sscale=[1 1 1]*2;
 iter=20;
 folder=['simu_dynamic/'];
-recon00=load('data/phantom_simu.mat');
+load('data/data_simu.mat');
+recon00=data.phantom_simu;
 if ~exist(folder,'dir')
     mkdir(folder);
 end
@@ -23,10 +23,8 @@ dim1=[64 64 48];
 dt=5e-6;
 te(1)=0.002;
 te(2)=0.002;
-% load(['/home/ubuntu/Documents/work/train/01/data.mat']);
-load(['data/trajectory.mat']);
-traj = trajectory.trajectory;
-traj_idx = trajectory.idx;
+traj = data.trajectory.trajectory;
+traj_idx = data.trajectory.idx;
 traj{1} = traj{1}(traj_idx{1},:);   
 traj{2} = traj{2}(traj_idx{2},:); 
 dis=traj{1}(:,1).^2+traj{1}(:,2).^2+traj{1}(:,3).^2;
@@ -125,8 +123,7 @@ for k=1:length(operator)
 end
 %% wmap error
 
-load('data/smaps.mat');
-smaps=double(smaps);
+smaps=double(data.smaps);
 
 Fg0{1}=orc_segm_nuFTOperator_structure(traj2(1),dim1./scale,(imresize4D(smaps,dim1)),dt,10,Tt(1),0.01);
 Fg0{2}=orc_segm_nuFTOperator_structure(traj2(2),dim1./scale,(imresize4D(smaps,dim1)),dt,10,Tt(2),0.01);
@@ -136,7 +133,7 @@ Tt2{1}=Tt{1}+dte;
 Tt2{2}=Tt{2}+dte;
 Fg0_dte{4}=orc_segm_nuFTOperator_structure(traj2,dim1./scale,(imresize4D(smaps,dim1)),dt,10,Tt2,0.01);
 
-scale2=[1 1 1]/1;
+scale2=[1 1 1]/2;
 traj3=traj2;
 traj3{1}(:,1)=traj2{1}(:,1)*scale2(1);
 traj3{1}(:,2)=traj2{1}(:,2)*scale2(2);
